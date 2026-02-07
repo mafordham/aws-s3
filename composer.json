@@ -1,0 +1,19 @@
+{
+    "name": "mafordham/aws-s3",
+    "description": "A simple, bare-bones S3 helper class",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "MaFordham\\AwsS3\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Matt Fordham",
+            "email": "matt@logika.net"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {}
+}
