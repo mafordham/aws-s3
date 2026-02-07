@@ -8,12 +8,6 @@
             "MaFordham\\AwsS3\\": "src/"
         }
     },
-    "authors": [
-        {
-            "name": "Matt Fordham",
-            "email": "matt@logika.net"
-        }
-    ],
     "minimum-stability": "stable",
     "require": {}
 }
