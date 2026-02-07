@@ -27,6 +27,8 @@ class AwsS3
 
     public function objectUrl(string $bucket, string $path, int $expire = 86400)
     {
+        $path = '/' . ltrim($path, '/');
+
         $now = time();
         $date = gmdate('Ymd', $now);
         $time = gmdate('Ymd\THis\Z', $now);
@@ -53,6 +55,8 @@ class AwsS3
 
     public function objectGet(string $bucket, string $path, array $headers = [])
     {
+        $path = '/' . ltrim($path, '/');
+
         list($requestHeaders, $amzHeaders) = $this->parseHeaders($headers);
 
         $awsSignature = $this->createSignature('GET', $bucket, $path, $amzHeaders);
@@ -65,6 +69,8 @@ class AwsS3
 
     public function objectPut(string $bucket, string $path, string $contentType, string|null &$object, array $headers = [])
     {
+        $path = '/' . ltrim($path, '/');
+
         $contentMD5 = base64_encode(md5($object, TRUE));
 
         list($requestHeaders, $amzHeaders) = $this->parseHeaders($headers);
@@ -86,6 +92,8 @@ class AwsS3
 
     public function objectDelete(string $bucket, string $path)
     {
+        $path = '/' . ltrim($path, '/');
+
         $awsSignature = $this->createSignature('DELETE', $bucket, $path);
 
         $context = $this->createStreamContext('DELETE', "Date: {$this->dateStamp}"
@@ -96,6 +104,8 @@ class AwsS3
 
     public function objectsList(string $bucket, string $path = '/', array $params = [])
     {
+        $path = '/' . ltrim($path, '/');
+
         $qs = ((!empty($params) && is_array($params)) ? "?" . http_build_query($params) : "");
 
         $awsSignature = $this->createSignature('GET', $bucket, $path);

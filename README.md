@@ -59,26 +59,32 @@ $s3 = new AwsS3([
 ## List Buckets
 
 ```php
-$buckets = $s3->listBuckets();
-print_r($buckets);
+$objects = $s3->objectsList();
+print_r($objects);
 ```
 
 ## Upload a File
 
 ```php
-$s3->uploadFile('my-bucket', 'remote/path/file.txt', '/local/path/file.txt');
+$s3->objectPut('my-bucket', '/remote/path/file.txt', 'image/png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/tO7sAAAAASUVORK5CYII='));
 ```
 
 ## Download a File
 
 ```php
-$s3->downloadFile('my-bucket', 'remote/path/file.txt', '/local/path/file.txt');
+$s3->objectGet('my-bucket', '/remote/path/file.txt');
 ```
 
 ## Delete an Object
 
 ```php
-$s3->deleteObject('my-bucket', 'remote/path/file.txt');
+$s3->objectDelete('my-bucket', '/remote/path/file.txt');
+```
+
+## Public URL for an Object
+
+```php
+$s3->objectUrl('my-bucket', '/remote/path/file.txt');
 ```
 
 ## Security
