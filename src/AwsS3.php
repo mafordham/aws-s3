@@ -55,120 +55,126 @@ class AwsS3
 
     public function objectGet(string $bucket, string $path, array $headers = [])
     {
-        $path = '/' . ltrim($path, '/');
-
-        list($requestHeaders, $amzHeaders) = $this->parseHeaders($headers);
-
-        $awsSignature = $this->createSignature('GET', $bucket, $path, $amzHeaders);
-
-        $context = $this->createStreamContext('GET', "Date: {$this->dateStamp}{$requestHeaders}"
-            . "\r\nAuthorization: AWS {$this->awsAccessKeyId}:{$awsSignature}");
-
-        return ($this->snagContents("https://{$bucket}.s3.{$this->awsRegion}.amazonaws.com{$path}", $context));
+        return $this->requestV4('GET', $bucket, $path, '', '', $headers);
     }
 
-    public function objectPut(string $bucket, string $path, string $contentType, string|null &$object, array $headers = [])
+    public function objectPut(string $bucket, string $path, string $contentType, string|null $object, array $headers = [])
     {
-        $path = '/' . ltrim($path, '/');
-
-        $contentMD5 = base64_encode(md5($object, TRUE));
-
-        list($requestHeaders, $amzHeaders) = $this->parseHeaders($headers);
-
-        $awsSignature = $this->createSignature('PUT', $bucket, $path, $amzHeaders, $contentType, $contentMD5);
-
-        $context = $this->createStreamContext(
-            'PUT',
-            "Date: {$this->dateStamp}{$requestHeaders}"
-                . "\r\nContent-Type: {$contentType}"
-                . "\r\nContent-MD5: {$contentMD5}"
-                . "\r\nContent-Length: " . strlen($object)
-                . "\r\nAuthorization: AWS {$this->awsAccessKeyId}:{$awsSignature}",
-            $object
-        );
-
-        return ($this->snagContents("https://{$bucket}.s3.{$this->awsRegion}.amazonaws.com{$path}", $context));
+        return $this->requestV4('PUT', $bucket, $path, $contentType, $object ?? '', $headers);
     }
 
     public function objectDelete(string $bucket, string $path)
     {
-        $path = '/' . ltrim($path, '/');
-
-        $awsSignature = $this->createSignature('DELETE', $bucket, $path);
-
-        $context = $this->createStreamContext('DELETE', "Date: {$this->dateStamp}"
-            . "\r\nAuthorization: AWS {$this->awsAccessKeyId}:{$awsSignature}");
-
-        return ($this->snagContents("https://{$bucket}.s3.{$this->awsRegion}.amazonaws.com{$path}", $context));
+        return $this->requestV4('DELETE', $bucket, $path);
     }
 
     public function objectsList(string $bucket, string $path = '/', array $params = [])
     {
-        $path = '/' . ltrim($path, '/');
-
-        $qs = ((!empty($params) && is_array($params)) ? "?" . http_build_query($params) : "");
-
-        $awsSignature = $this->createSignature('GET', $bucket, $path);
-
-        $context = $this->createStreamContext('GET', "Date: {$this->dateStamp}"
-            . "\r\nAuthorization: AWS {$this->awsAccessKeyId}:{$awsSignature}");
-
-        return ($this->snagContents("https://{$bucket}.s3.{$this->awsRegion}.amazonaws.com{$path}{$qs}", $context));
+        $qs = (!empty($params) ? '?' . http_build_query($params) : '');
+        return $this->requestV4('GET', $bucket, $path, '', '', [], $qs);
     }
 
     public function bucketsList()
     {
-        $awsSignature = $this->createSignature('GET');
+        // bucketsList uses the generic s3 host, not a bucket-specific one
+        $host = "s3.{$this->awsRegion}.amazonaws.com";
+        $now = time();
+        $date = gmdate('Ymd', $now);
+        $amzDate = gmdate('Ymd\THis\Z', $now);
+        $payloadHash = hash('sha256', '');
 
-        $context = $this->createStreamContext('GET', "Date: {$this->dateStamp}"
-            . "\r\nAuthorization: AWS {$this->awsAccessKeyId}:{$awsSignature}");
+        $headerMap = [
+            'host' => $host,
+            'x-amz-content-sha256' => $payloadHash,
+            'x-amz-date' => $amzDate,
+        ];
+        ksort($headerMap);
 
-        return ($this->snagContents("https://s3.{$this->awsRegion}.amazonaws.com/", $context));
-    }
-
-
-    private function parseHeaders(array $headers = [])
-    {
-        $ret = ['', ''];
-        if (!empty($headers) && is_array($headers)) {
-            $arr = [];
-            foreach ($headers as $k => $v) {
-                $ret[0] .= "\r\n" . trim($k) . ": " . trim($v);
-                $h = trim(strtolower($k));
-                if (str_starts_with($h, 'x-amz-')) {
-                    if (isset($arr[$h])) {
-                        $arr[$h] .= ',' . trim($v);
-                    } else {
-                        $arr[$h] = trim($v);
-                    }
-                }
-            }
-            ksort($arr);
-            foreach ($arr as $k => $v) {
-                $ret[1] .= "{$k}:{$v}\n";
-            }
+        $signedHeaders = implode(';', array_keys($headerMap));
+        $canonicalHeaders = '';
+        foreach ($headerMap as $k => $v) {
+            $canonicalHeaders .= "{$k}:{$v}\n";
         }
-        return ($ret);
+
+        $canonicalRequest = "GET\n/\n\n{$canonicalHeaders}\n{$signedHeaders}\n{$payloadHash}";
+        $scope = "{$date}/{$this->awsRegion}/s3/aws4_request";
+        $stringToSign = "AWS4-HMAC-SHA256\n{$amzDate}\n{$scope}\n" . hash('sha256', $canonicalRequest);
+
+        $signingKey = hash_hmac('sha256', 'aws4_request',
+            hash_hmac('sha256', 's3',
+                hash_hmac('sha256', $this->awsRegion,
+                    hash_hmac('sha256', $date, "AWS4{$this->awsSecretAccessKey}", true),
+                true), true), true);
+
+        $signature = hash_hmac('sha256', $stringToSign, $signingKey);
+        $auth = "AWS4-HMAC-SHA256 Credential={$this->awsAccessKeyId}/{$scope}, SignedHeaders={$signedHeaders}, Signature={$signature}";
+
+        $httpHeaders = "Authorization: {$auth}\r\nx-amz-content-sha256: {$payloadHash}\r\nx-amz-date: {$amzDate}";
+        $context = $this->createStreamContext('GET', $httpHeaders);
+        return $this->snagContents("https://{$host}/", $context);
     }
 
-    private function createSignature(string $method, string $bucket = '', string $path = '', string $amzHeaders = '', string $contentType = '', string $contentMD5 = '')
+    private function requestV4(string $method, string $bucket, string $path, string $contentType = '', string $body = '', array $headers = [], string $queryString = '')
     {
-        return (base64_encode(hash_hmac('sha1', mb_convert_encoding(
-            "{$method}\n"
-                . "{$contentMD5}\n"
-                . "{$contentType}\n"
-                . "{$this->dateStamp}\n"
-                . "{$amzHeaders}/{$bucket}{$path}",
-            'UTF-8'
-        ), $this->awsSecretAccessKey, TRUE)));
+        $host = "{$bucket}.s3.{$this->awsRegion}.amazonaws.com";
+        $now = time();
+        $date = gmdate('Ymd', $now);
+        $amzDate = gmdate('Ymd\THis\Z', $now);
+        $payloadHash = hash('sha256', $body);
+
+        // Build header map
+        $headerMap = [
+            'host' => $host,
+            'x-amz-content-sha256' => $payloadHash,
+            'x-amz-date' => $amzDate,
+        ];
+        if ($contentType) $headerMap['content-type'] = $contentType;
+        foreach ($headers as $k => $v) {
+            $headerMap[strtolower(trim($k))] = trim($v);
+        }
+        ksort($headerMap);
+
+        $signedHeaders = implode(';', array_keys($headerMap));
+        $canonicalHeaders = '';
+        foreach ($headerMap as $k => $v) {
+            $canonicalHeaders .= "{$k}:{$v}\n";
+        }
+
+        $canonicalRequest = "{$method}\n{$path}\n" . ltrim($queryString, '?') . "\n{$canonicalHeaders}\n{$signedHeaders}\n{$payloadHash}";
+
+        $scope = "{$date}/{$this->awsRegion}/s3/aws4_request";
+        $stringToSign = "AWS4-HMAC-SHA256\n{$amzDate}\n{$scope}\n" . hash('sha256', $canonicalRequest);
+
+        $signingKey = hash_hmac('sha256', 'aws4_request',
+            hash_hmac('sha256', 's3',
+                hash_hmac('sha256', $this->awsRegion,
+                    hash_hmac('sha256', $date, "AWS4{$this->awsSecretAccessKey}", true),
+                true), true), true);
+
+        $signature = hash_hmac('sha256', $stringToSign, $signingKey);
+        $auth = "AWS4-HMAC-SHA256 Credential={$this->awsAccessKeyId}/{$scope}, SignedHeaders={$signedHeaders}, Signature={$signature}";
+
+        // Build HTTP headers string
+        $httpHeaders = "Authorization: {$auth}";
+        foreach ($headerMap as $k => $v) {
+            if ($k === 'host') continue;
+            $httpHeaders .= "\r\n{$k}: {$v}";
+        }
+        if ($body !== '') {
+            $httpHeaders .= "\r\nContent-Length: " . strlen($body);
+        }
+
+        $context = $this->createStreamContext($method, $httpHeaders, $body);
+        $url = "https://{$host}{$path}{$queryString}";
+        return $this->snagContents($url, $context);
     }
 
-    private function createStreamContext(string $method, string $header, string|null &$object = NULL)
+    private function createStreamContext(string $method, string $header, string $content = '')
     {
         return (stream_context_create(array('http' => array(
             'method' => $method,
             'header' => $header,
-            'content' => $object ?? '',
+            'content' => $content,
             'timeout' => $this->timeout,
             'ignore_errors' => TRUE,
             'ssl' => array(
@@ -200,6 +206,14 @@ class AwsS3
                         }
                     }
                 }
+
+                // Check if we got a 5xx server error - retry if so
+                $statusCode = (int)($headers['Response-Code'] ?? 0);
+                if ($statusCode >= 500 && $statusCode < 600 && $attempt < $retries) {
+                    usleep(pow(2, $attempt - 1) * 1000000); // 1s, 2s, 4s, 8s...
+                    continue; // Retry on server errors
+                }
+
                 return ([$buf, $headers]);
             }
             if ($attempt < $retries) {
